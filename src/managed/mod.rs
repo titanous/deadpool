@@ -345,6 +345,7 @@ impl<M: Manager, W: From<Object<M>>> Pool<M, W> {
     ///
     /// See [`PoolError`] for details.
     pub async fn timeout_get(&self, timeouts: &Timeouts) -> Result<W, PoolError<M::Error>> {
+        let start_time = Instant::now()
         let _ = self.inner.users.fetch_add(1, Ordering::Relaxed);
         let users_guard = DropGuard(|| {
             let _ = self.inner.users.fetch_sub(1, Ordering::Relaxed);
@@ -376,7 +377,7 @@ impl<M: Manager, W: From<Object<M>>> Pool<M, W> {
             .await?
         };
 
-        let inner_obj = loop {
+        let mut inner_obj = loop {
             let inner_obj = match self.inner.config.queue_mode {
                 QueueMode::Fifo => self.inner.slots.lock().unwrap().vec.pop_front(),
                 QueueMode::Lifo => self.inner.slots.lock().unwrap().vec.pop_back(),
@@ -393,6 +394,9 @@ impl<M: Manager, W: From<Object<M>>> Pool<M, W> {
 
         users_guard.disarm();
         permit.forget();
+
+        inner_obj.metrics.requested = start_time;
+        inner_obj.metrics.acquired = Instant::now();
 
         Ok(Object {
             inner: Some(inner_obj),
